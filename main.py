@@ -100,17 +100,17 @@ def _resample_frames(frames, resampler):
 device = torch.device("cuda")
 
 asr_model = nemo_asr.models.ASRModel.restore_from(
-    restore_path="parakeet-tdt-0.6b-v2.nemo", map_location=device
+    restore_path="models/parakeet-tdt-0.6b-v2.nemo", map_location=device
 )
 asr_model.change_attention_model("rel_pos_local_attn", [256, 256])
 asr_model.change_subsampling_conv_chunking_factor(1)  # 1 = auto select
 
-file_path = "sample.mp3"
+file_path = "files/sample2.mkv"
 
 audio = decode_audio(
     file_path, sampling_rate=asr_model.preprocessor._cfg["sample_rate"]
 )
-output = asr_model.transcribe(signals=[audio], timestamps=True)
+output = asr_model.transcribe(audio, timestamps=True)
 # by default, timestamps are enabled for char, word and segment level
 word_timestamps = output[0].timestamp["word"]  # word level timestamps for first sample
 segment_timestamps = output[0].timestamp["segment"]  # segment level timestamps
