@@ -86,6 +86,18 @@ def decode_audio(
     return audio
 
 
+def format_srt_timestamp(seconds: float) -> str:
+    """Converts seconds to SRT time format HH:MM:SS,ms."""
+    total_milliseconds = int(seconds * 1000)
+
+    hours = total_milliseconds // 3600000
+    minutes = (total_milliseconds % 3600000) // 60000
+    seconds = (total_milliseconds % 60000) // 1000
+    milliseconds = total_milliseconds % 1000
+
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+
 device = torch.device("cuda")
 
 asr_model = nemo_asr.models.ASRModel.restore_from(
@@ -105,5 +117,8 @@ word_timestamps = output[0].timestamp["word"]  # word level timestamps for first
 segment_timestamps = output[0].timestamp["segment"]  # segment level timestamps
 char_timestamps = output[0].timestamp["char"]  # char level timestamps
 
-for stamp in segment_timestamps:
-    print(f"{stamp['start']}s - {stamp['end']}s : {stamp['segment']}")
+for i, stamp in enumerate(segment_timestamps, 1):
+    start_time = format_srt_timestamp(stamp["start"])
+    end_time = format_srt_timestamp(stamp["end"])
+    text = stamp["segment"].strip()
+    print(f"{i}\n{start_time} --> {end_time}\n{text}\n")
