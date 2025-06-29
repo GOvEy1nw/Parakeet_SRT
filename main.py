@@ -6,6 +6,7 @@ import itertools
 from typing import BinaryIO, Union
 import av
 import numpy as np
+import os
 
 
 def decode_audio(
@@ -107,6 +108,7 @@ asr_model.change_attention_model("rel_pos_local_attn", [256, 256])
 asr_model.change_subsampling_conv_chunking_factor(1)  # 1 = auto select
 
 file_path = "files/sample2.mkv"
+output_srt_path = os.path.splitext(file_path)[0] + ".srt"
 
 audio = decode_audio(
     file_path, sampling_rate=asr_model.preprocessor._cfg["sample_rate"]
@@ -117,8 +119,11 @@ word_timestamps = output[0].timestamp["word"]  # word level timestamps for first
 segment_timestamps = output[0].timestamp["segment"]  # segment level timestamps
 char_timestamps = output[0].timestamp["char"]  # char level timestamps
 
-for i, stamp in enumerate(segment_timestamps, 1):
-    start_time = format_srt_timestamp(stamp["start"])
-    end_time = format_srt_timestamp(stamp["end"])
-    text = stamp["segment"].strip()
-    print(f"{i}\n{start_time} --> {end_time}\n{text}\n")
+with open(output_srt_path, "w", encoding="utf-8") as srt_file:
+    for i, stamp in enumerate(segment_timestamps, 1):
+        start_time = format_srt_timestamp(stamp["start"])
+        end_time = format_srt_timestamp(stamp["end"])
+        text = stamp["segment"].strip()
+        srt_file.write(f"{i}\n{start_time} --> {end_time}\n{text}\n\n")
+
+print(f"Subtitle file saved to {output_srt_path}")
