@@ -7,7 +7,30 @@ from typing import BinaryIO, Union
 import av
 import numpy as np
 import os
+import sys
 from flask import Flask, request, jsonify
+
+# --- Configuration ---
+# Models are expected to be in a directory mapped to /app/models in the container.
+MODELS_DIR = "/app/models"
+# Network settings are fixed for simplicity within the Docker environment.
+HOST = "0.0.0.0"
+PORT = 5000
+
+# Fetch configuration from environment variables to make the service configurable.
+# Model settings
+MODEL_NAME = os.getenv(
+    "MODEL_NAME"
+)  # e.g., "parakeet-tdt-0.6b-v2.nemo" or "nvidia/parakeet-tdt-1.1b"
+
+# Transcription settings
+TIMESTAMP_LEVEL = os.getenv("TIMESTAMP_LEVEL", "segment").lower()
+VALID_LEVELS = ["segment", "word", "char"]
+if TIMESTAMP_LEVEL not in VALID_LEVELS:
+    print(
+        f"Warning: Invalid TIMESTAMP_LEVEL '{TIMESTAMP_LEVEL}'. Defaulting to 'segment'."
+    )
+    TIMESTAMP_LEVEL = "segment"
 
 # --- Global variable to hold the ASR model ---
 asr_model = None
@@ -27,13 +50,15 @@ def process_file(input_path, output_path):
         )
         output = asr_model.transcribe(audio, timestamps=True)
 
-        segment_timestamps = output[0].timestamp["segment"]
+        # Use the timestamp level specified by the environment variable
+        timestamps_to_process = output[0].timestamp[TIMESTAMP_LEVEL]
 
         with open(output_path, "w", encoding="utf-8") as srt_file:
-            for i, stamp in enumerate(segment_timestamps, 1):
+            for i, stamp in enumerate(timestamps_to_process, 1):
                 start_time = format_srt_timestamp(stamp["start"])
                 end_time = format_srt_timestamp(stamp["end"])
-                text = stamp["segment"].strip()
+                # The key for the text ('segment', 'word', 'char') is the same as the level
+                text = stamp[TIMESTAMP_LEVEL].strip()
                 srt_file.write(f"{i}\n{start_time} --> {end_time}\n{text}\n\n")
 
         print(f"Successfully saved subtitle file to {output_path}")
@@ -161,17 +186,52 @@ def transcribe_endpoint():
 def main():
     global asr_model
 
+    if not MODEL_NAME:
+        print("Error: The MODEL_NAME environment variable must be set.")
+        sys.exit(1)
+
+    print("--- Configuration ---")
+    print(f"Model Name/Path: {MODEL_NAME}")
+    print(f"Models Directory: {MODELS_DIR}")
+    print(f"Timestamp Level: {TIMESTAMP_LEVEL}")
+    print(f"Server Host: {HOST}")
+    print(f"Server Port: {PORT}")
+    print("---------------------")
+
+    # Determine the full path for a local model file
+    local_model_path = os.path.join(MODELS_DIR, MODEL_NAME)
+
     print("Loading ASR model... (this may take a moment)")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    asr_model = nemo_asr.models.ASRModel.restore_from(
-        restore_path="models/parakeet-tdt-0.6b-v2.nemo", map_location=device
-    )
+
+    # Check if the model file exists at the expected path.
+    if not os.path.exists(local_model_path):
+        print(f"Error: Model file not found at '{local_model_path}'.")
+        print(
+            f"Please make sure the .nemo file exists and the MODEL_NAME environment variable is set correctly."
+        )
+        print(
+            f"The models directory inside the container is fixed at '{MODELS_DIR}'. Mount your local models directory there."
+        )
+        sys.exit(1)
+
+    # Load the model from the local path.
+    print(f"Found local model file. Loading from: {local_model_path}")
+    try:
+        asr_model = nemo_asr.models.ASRModel.restore_from(
+            restore_path=local_model_path, map_location=device
+        )
+    except Exception as e:
+        print(f"Error: Failed to load model from '{local_model_path}'.")
+        print(f"Details: {e}")
+        sys.exit(1)
+
     asr_model.change_attention_model("rel_pos_local_attn", [256, 256])
     asr_model.change_subsampling_conv_chunking_factor(1)  # 1 = auto select
-    print("Model loaded.")
+    print("Model loaded successfully.")
 
-    print("Starting transcription service...")
-    app.run(host="0.0.0.0", port=5000)
+    print(f"Starting transcription service on http://{HOST}:{PORT}")
+    app.run(host=HOST, port=PORT)
 
 
 if __name__ == "__main__":

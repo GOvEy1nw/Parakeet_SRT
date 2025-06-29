@@ -1,0 +1,5 @@
+nemo_toolkit["asr"]
+Flask
+requests
+av
+numpy

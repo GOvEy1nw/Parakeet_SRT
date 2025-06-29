@@ -1,0 +1,16 @@
+# Ignore the directory containing the large model files.
+# These should be mounted as a volume at runtime, not included in the image.
+models/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore Git directory
+.git/
+.gitignore
+.gitattributes
+
+# Ignore virtual environment folders
+venv/
+.venv/
