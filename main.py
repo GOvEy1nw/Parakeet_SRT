@@ -7,6 +7,40 @@ from typing import BinaryIO, Union
 import av
 import numpy as np
 import os
+from flask import Flask, request, jsonify
+
+# --- Global variable to hold the ASR model ---
+asr_model = None
+
+
+def process_file(input_path, output_path):
+    """Processes a single media file to generate an SRT."""
+    print(f"Processing request: {input_path} -> {output_path}")
+    try:
+        # Ensure the output directory exists
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        audio = decode_audio(
+            input_path, sampling_rate=asr_model.preprocessor._cfg["sample_rate"]
+        )
+        output = asr_model.transcribe(audio, timestamps=True)
+
+        segment_timestamps = output[0].timestamp["segment"]
+
+        with open(output_path, "w", encoding="utf-8") as srt_file:
+            for i, stamp in enumerate(segment_timestamps, 1):
+                start_time = format_srt_timestamp(stamp["start"])
+                end_time = format_srt_timestamp(stamp["end"])
+                text = stamp["segment"].strip()
+                srt_file.write(f"{i}\n{start_time} --> {end_time}\n{text}\n\n")
+
+        print(f"Successfully saved subtitle file to {output_path}")
+        return True, None
+    except Exception as e:
+        print(f"Failed to process {input_path}. Error: {e}")
+        return False, str(e)
 
 
 def decode_audio(
@@ -99,31 +133,46 @@ def format_srt_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
 
 
-device = torch.device("cuda")
+app = Flask(__name__)
 
-asr_model = nemo_asr.models.ASRModel.restore_from(
-    restore_path="models/parakeet-tdt-0.6b-v2.nemo", map_location=device
-)
-asr_model.change_attention_model("rel_pos_local_attn", [256, 256])
-asr_model.change_subsampling_conv_chunking_factor(1)  # 1 = auto select
 
-file_path = "files/sample2.mkv"
-output_srt_path = os.path.splitext(file_path)[0] + ".srt"
+@app.route("/transcribe", methods=["POST"])
+def transcribe_endpoint():
+    data = request.get_json()
+    if not data:
+        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
 
-audio = decode_audio(
-    file_path, sampling_rate=asr_model.preprocessor._cfg["sample_rate"]
-)
-output = asr_model.transcribe(audio, timestamps=True)
-# by default, timestamps are enabled for char, word and segment level
-word_timestamps = output[0].timestamp["word"]  # word level timestamps for first sample
-segment_timestamps = output[0].timestamp["segment"]  # segment level timestamps
-char_timestamps = output[0].timestamp["char"]  # char level timestamps
+    input_path = data.get("input_path")
+    output_path = data.get("output_path")
 
-with open(output_srt_path, "w", encoding="utf-8") as srt_file:
-    for i, stamp in enumerate(segment_timestamps, 1):
-        start_time = format_srt_timestamp(stamp["start"])
-        end_time = format_srt_timestamp(stamp["end"])
-        text = stamp["segment"].strip()
-        srt_file.write(f"{i}\n{start_time} --> {end_time}\n{text}\n\n")
+    if not input_path or not output_path:
+        return jsonify(
+            {"status": "error", "message": "input_path and output_path are required"}
+        ), 400
 
-print(f"Subtitle file saved to {output_srt_path}")
+    success, error_message = process_file(input_path, output_path)
+
+    if success:
+        return jsonify({"status": "success", "output_path": output_path})
+    else:
+        return jsonify({"status": "error", "message": error_message}), 500
+
+
+def main():
+    global asr_model
+
+    print("Loading ASR model... (this may take a moment)")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    asr_model = nemo_asr.models.ASRModel.restore_from(
+        restore_path="models/parakeet-tdt-0.6b-v2.nemo", map_location=device
+    )
+    asr_model.change_attention_model("rel_pos_local_attn", [256, 256])
+    asr_model.change_subsampling_conv_chunking_factor(1)  # 1 = auto select
+    print("Model loaded.")
+
+    print("Starting transcription service...")
+    app.run(host="0.0.0.0", port=5000)
+
+
+if __name__ == "__main__":
+    main()
